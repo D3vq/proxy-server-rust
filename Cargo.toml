@@ -1,0 +1,13 @@
+[package]
+name = "proxy_server"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+tokio = { version = "1", features = ["full"] }
+reqwest = { version = "0.11", features = ["default-tls", "rustls-tls", "json"] }
+lru = "0.6"
+log = "0.4"
+env_logger = "0.9"
+base64 = "0.13" 
+
