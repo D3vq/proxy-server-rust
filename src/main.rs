@@ -1,15 +1,16 @@
-use tokio::net::{TcpListener, TcpStream};
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::sync::Mutex;
-use std::sync::Arc;
+use base64::decode;
+use env_logger;
+use log::{error, info};
 use lru::LruCache;
 use reqwest::Client;
-use log::{info, error};
-use env_logger;
-use base64::{decode};
-use std::time::{SystemTime, Duration};
+use std::sync::Arc;
+use std::time::{Duration, SystemTime};
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::net::{TcpListener, TcpStream};
+use tokio::sync::Mutex;
+use tokio::time::timeout;
 
-//RUST_LOG=info cargo run | tee proxy_logs.txt RUST_BACKTRACE=1 to run the program
+// RUST_LOG=info cargo run | tee proxy_logs.txt RUST_BACKTRACE=1 to run the program
 
 struct CacheEntry {
     response: String,
@@ -18,8 +19,36 @@ struct CacheEntry {
 
 type SharedCache = Arc<Mutex<LruCache<String, CacheEntry>>>;
 
+// List of forbidden words
+const FORBIDDEN_WORDS: &[&str] = &[
+    "adult",
+    "gamble",
+    "casino",
+    "drugs",
+    "porn",
+    "violence",
+    "phishing",
+    "scam",
+    "fake",
+    "illegal",
+    "fraud",
+    "hacking",
+    "pirate",
+    "botnet",
+    "terror",
+    "extremist",
+    "spam",
+    "pharmacy",
+    "clickbait",
+    "hate",
+    "virus",
+];
+
 async fn handle_client(mut client_stream: TcpStream, cache: SharedCache, client: Client) {
-    info!("Handling client on thread {:?}", std::thread::current().id());
+    info!(
+        "Handling client on thread {:?}",
+        std::thread::current().id()
+    );
 
     let mut buffer = [0; 1024];
     let bytes_read = client_stream.read(&mut buffer).await.unwrap();
@@ -45,6 +74,22 @@ async fn handle_client(mut client_stream: TcpStream, cache: SharedCache, client:
     let url = extract_url_from_request(&request);
     info!("Received request for URL: {}", url);
 
+    if contains_forbidden_word(&url) {
+        let response = "HTTP/1.1 403 Forbidden\r\n\r\nThis URL is blocked";
+        if let Err(e) = client_stream.write_all(response.as_bytes()).await {
+            error!("Failed to send blocked URL response: {}", e);
+        }
+        return;
+    }
+
+    if !url.starts_with("https://") {
+        let response = "HTTP/1.1 400 Bad Request\r\n\r\nOnly secure URLs (https) are allowed";
+        if let Err(e) = client_stream.write_all(response.as_bytes()).await {
+            error!("Failed to send bad request response: {}", e);
+        }
+        return;
+    }
+
     let expiration_duration = Duration::new(60, 0); // Cache expiration duration (60 seconds)
 
     let (response, source) = {
@@ -56,13 +101,25 @@ async fn handle_client(mut client_stream: TcpStream, cache: SharedCache, client:
             } else {
                 info!("Cache expired for URL: {}", url);
                 let response = fetch_from_origin(&url, &client).await;
-                cache.put(url.clone(), CacheEntry { response: response.clone(), timestamp: SystemTime::now() });
+                cache.put(
+                    url.clone(),
+                    CacheEntry {
+                        response: response.clone(),
+                        timestamp: SystemTime::now(),
+                    },
+                );
                 (response, "Origin")
             }
         } else {
             info!("Cache miss for URL: {}", url);
             let response = fetch_from_origin(&url, &client).await;
-            cache.put(url.clone(), CacheEntry { response: response.clone(), timestamp: SystemTime::now() });
+            cache.put(
+                url.clone(),
+                CacheEntry {
+                    response: response.clone(),
+                    timestamp: SystemTime::now(),
+                },
+            );
             (response, "Origin")
         }
     };
@@ -93,7 +150,7 @@ fn extract_url_from_request(request: &str) -> String {
     url
 }
 
-fn is_authenticated(lines: &Vec<&str>) -> bool {
+fn is_authenticated(lines: &[&str]) -> bool {
     for line in lines {
         if line.starts_with("Authorization: Basic ") {
             let encoded_creds = line.trim_start_matches("Authorization: Basic ");
@@ -109,9 +166,20 @@ fn is_authenticated(lines: &Vec<&str>) -> bool {
     false
 }
 
+fn contains_forbidden_word(url: &str) -> bool {
+    FORBIDDEN_WORDS.iter().any(|&word| url.contains(word))
+}
+
 async fn fetch_from_origin(url: &str, client: &Client) -> String {
-    let response = client.get(url).send().await.unwrap().text().await.unwrap();
-    response
+    let result = timeout(Duration::from_secs(5), client.get(url).send()).await;
+    match result {
+        Ok(Ok(response)) => response
+            .text()
+            .await
+            .unwrap_or_else(|_| "Failed to read response text".to_string()),
+        Ok(Err(_)) => "Failed to fetch from origin".to_string(),
+        Err(_elapsed) => "Request timed out".to_string(),
+    }
 }
 
 #[tokio::main(flavor = "multi_thread", worker_threads = 4)]
