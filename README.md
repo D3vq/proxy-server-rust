@@ -33,12 +33,10 @@ This command starts the proxy server inside a Docker container, exposing port 80
 curl -H "Authorization: Basic c3VtaXQ6MTIz" http://localhost:8080/https://www.google.com
 ```
 
-### Here, c3VtaXQ6MTIz is the base64-encoded string of sumit:123 (which is your_username:your_password). Replace it with your own base64-encoded credentials.
+Here, c3VtaXQ6MTIz is the base64-encoded string of sumit:123 (which is your_username:your_password). Replace it with your own base64-encoded credentials.
 
 ## Notes
-```
-The proxy server runs on localhost:8080.
-Ensure Docker is properly installed and running on your machine.
-Adjust firewall settings if necessary to allow traffic on port 8080.
-```
+- The proxy server runs on localhost:8080.
+- Ensure Docker is properly installed and running on your machine.
+- Adjust firewall settings if necessary to allow traffic on port 8080.
 
