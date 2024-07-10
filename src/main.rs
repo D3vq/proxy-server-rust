@@ -10,7 +10,7 @@ use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::Mutex;
 use tokio::time::timeout;
 
-// RUST_LOG=info cargo run | tee proxy_logs.txt RUST_BACKTRACE=1 to run the program
+// RUST_LOG=info cargo run to run the program
 
 struct CacheEntry {
     response: String,
@@ -125,7 +125,7 @@ async fn handle_client(mut client_stream: TcpStream, cache: SharedCache, client:
     };
 
     let http_response = format!(
-        "HTTP/1.1 200 OK\r\nContent-Length: {}\r\n\r\n{}",
+        "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nAccess-Control-Allow-Origin: *\r\n\r\n{}",
         response.len(),
         response
     );
@@ -150,13 +150,17 @@ fn extract_url_from_request(request: &str) -> String {
     url
 }
 
+use std::env;
+
 fn is_authenticated(lines: &[&str]) -> bool {
     for line in lines {
         if line.starts_with("Authorization: Basic ") {
             let encoded_creds = line.trim_start_matches("Authorization: Basic ");
             if let Ok(decoded) = decode(encoded_creds) {
                 if let Ok(credentials) = String::from_utf8(decoded) {
-                    if credentials == "username:password" {
+                    // Retrieve expected credentials from environment variables
+                    let expected_credentials = env::var("PROXY_CREDENTIALS").unwrap_or_default();
+                    if credentials == expected_credentials {
                         return true;
                     }
                 }
@@ -186,8 +190,8 @@ async fn fetch_from_origin(url: &str, client: &Client) -> String {
 async fn main() {
     env_logger::init();
 
-    let listener = TcpListener::bind("127.0.0.1:8080").await.unwrap();
-    info!("Proxy server running on 127.0.0.1:8080");
+    let listener = TcpListener::bind("0.0.0.0:8080").await.unwrap();
+    info!("Proxy server running on 0.0.0.0:8080");
 
     let cache = Arc::new(Mutex::new(LruCache::new(100)));
     let client = Client::new();
